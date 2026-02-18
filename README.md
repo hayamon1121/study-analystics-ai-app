@@ -1,2 +1,2 @@
-# study-analysitcs-ai-app
+# study-analystics-ai-app
 

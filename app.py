@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+from openai import OpenAI
 plt.rcParams["font.family"] = "Meiryo"
 
 # =========================

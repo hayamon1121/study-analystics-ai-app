@@ -6,42 +6,37 @@ from openai import OpenAI
 plt.rcParams["font.family"] = "Meiryo"
 
 # =========================
-# タイトル
+# 定数
 # =========================
-st.title("学習記録・可視化AI")
-
-st.write("CSVをアップロードしてください")
+Model_Name = "gpt-5.5"
+Required_Columns = {"date", "subject", "study_time", "understanding"}
 
 # =========================
-# CSVアップロード
+# CSVファイルのチェック
 # =========================
-uploaded_file = st.file_uploader("学習ログCSV", type="csv")
+def validate_csv_columns(df):
+    missing_col = Required_Columns - set(df.columns)
 
-    
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file, parse_dates=["date"])
+    if missing_col:
+        st.error(
+            "CSVファイルの列が不足しています。"
+            f"不足している列: {', '.join(missing_col)}"
+        )
+        st.write("必要な列: date, subject, study_time, understanding")
+        st.stop()
 
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date")    
-    st.subheader("学習データ")
-    st.dataframe(df)
-
-    # =========================
-    # STEP4：ルールベース分析
-    # =========================
-    def understanding_level(x):
+# =========================
+# ルールベース分析
+# =========================
+def understanding_level(x):
         if x <= 2:
             return "低"
         elif x == 3:
             return "中"
         else:
             return "高"
-
-    df["理解度レベル"] = df["understanding"].apply(understanding_level)
-
-    avg_study_time = df["study_time"].mean()
-
-    def diagnose_problem(row):
+        
+def diagnose_problem(row, avg_study_time):
         if row["理解度レベル"] == "低":
             if row["study_time"] < avg_study_time:
                 return "努力不足"
@@ -49,10 +44,8 @@ if uploaded_file is not None:
                 return "理解不足"
         else:
             return "問題なし"
-
-    df["問題タイプ"] = df.apply(diagnose_problem, axis=1)
-
-    def recommend_action(problem_type):
+        
+def recommend_action(problem_type):
         if problem_type == "努力不足":
             return "学習時間を増やしましょう"
         elif problem_type == "理解不足":
@@ -60,39 +53,56 @@ if uploaded_file is not None:
         else:
             return "この調子で継続しましょう"
 
+
+def add_rulebased_analysis(df):
+    df = df.copy()
+    df["理解度レベル"] = df["understanding"].apply(understanding_level)
+    avg_study_time = df["study_time"].mean()
+    df["問題タイプ"] = df.apply(
+        lambda row: diagnose_problem(row, avg_study_time),
+        axis=1
+    )
     df["推薦アクション"] = df["問題タイプ"].apply(recommend_action)
 
-    # =========================
-    # 結果表示
-    # =========================
-    st.subheader("分析・推薦結果")
-    st.dataframe(df)
+    return df
 
-    # =========================
-    # LLM改善提案
-    # =========================
-    def make_learning_summary(df):
-        total_hours = df["study_time"].sum()
-        study_days = df["date"].dt.date.nunique()
-        avg_understanding = df["understanding"].mean()
+# =========================
+# LLM改善提案
+# =========================
+def make_learning_summary(df):
+    total_hours = df["study_time"].sum()
+    study_days = df["date"].dt.date.nunique()
+    avg_understanding = df["understanding"].mean()
 
-        subject_summary = (
-            df.groupby("subject").agg(
-                total_hours=("study_time", "sum"),
-                avg_understanding=("understanding", "mean"),
-                session_count=("subject", "count")
-            )
-            .reset_index()
-            .sort_values("total_hours", ascending=False)
+    subject_summary = (
+        df.groupby("subject")
+        .agg(
+            total_hours=("study_time", "sum"),
+            avg_understanding=("understanding", "mean"),
+            session_count=("subject", "count")
         )
+        .reset_index()
+        .sort_values("total_hours", ascending=False)
+    )
 
-        problem_summary = df["問題タイプ"].value_counts().reset_index()
-        problem_summary.columns = ["問題タイプ", "件数"]
+    problem_summary = df["問題タイプ"].value_counts().reset_index()
+    problem_summary.columns = ["問題タイプ", "件数"]
 
-        recent_records = (
-            df.sort_values("date").tail(10)[["date", "subject", "study_time", "understanding", "理解度レベル", "問題タイプ"]]
-        )
-        summary = f"""
+    recent_records = (
+        df.sort_values("date")
+        .tail(10)[
+            [
+                "date",
+                "subject",
+                "study_time",
+                "understanding",
+                "理解度レベル",
+                "問題タイプ"
+            ]
+        ]
+    )
+
+    summary = f"""
 [全体概要]
 総学習時間: {total_hours:.1f}時間
 学習日数: {study_days}日
@@ -107,9 +117,10 @@ if uploaded_file is not None:
 [直近の学習記録]
 {recent_records.to_string(index=False)}
 """
-        return summary
-    
-    def generate_llm_advice(df):
+    return summary
+
+
+def generate_llm_advice(df):
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         learning_summary = make_learning_summary(df)
 
@@ -134,12 +145,80 @@ if uploaded_file is not None:
 -200~400字程度でまとめる
 """
         response = client.responses.create(
-            model="gpt-5.5",
+            model=Model_Name,
             input=prompt
         )
+
         return response.output_text
+
+# =========================
+# グラフ表示
+# =========================
+def show_total_study_time_chart(df):
+    st.subheader("総学習時間の推移")
+
+    total_study_time = df.groupby('date')['study_time'].sum().reset_index()
+
+    fig, ax = plt.subplots()
+    ax.plot(total_study_time["date"], total_study_time["study_time"], marker = 'o')
+    ax.set_xlabel("日付")
+    ax.set_ylabel("総学習時間")
+    fig.autofmt_xdate()
+    st.pyplot(fig)
+
+
+def show_subject_study_time_chart(df):
+    st.subheader("科目別総学習時間の推移")
+
+    fig, ax = plt.subplots()
+
+    for subject, group in df.groupby("subject"):
+        total_study_time = (
+            group.groupby("date")["study_time"]
+            .sum()
+            .reset_index()
+        )
+
+        ax.plot(
+            total_study_time["date"],
+            total_study_time["study_time"],
+            marker="o",
+            label=subject
+        )
+
+    ax.set_xlabel("日付")
+    ax.set_ylabel("科目別学習時間")
+    fig.autofmt_xdate()
+    ax.legend()
+    st.pyplot(fig)
+
+
+# =========================
+# Streamlit画面
+# =========================
+st.title("学習記録・可視化AI")
+
+st.write("CSVをアップロードしてください")
+
+
+uploaded_file = st.file_uploader("学習ログCSV", type="csv")
+
     
-    # 表示
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+
+    validate_csv_columns(df)
+
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values("date")
+
+    st.subheader("学習データ")
+    st.dataframe(df)
+
+    df = add_rulebased_analysis(df)
+
+    st.subheader("分析・推薦結果")
+    st.dataframe(df)
 
     st.subheader("LLMによる学習改善提案")
 
@@ -153,38 +232,10 @@ if uploaded_file is not None:
         except Exception as e:
             st.error("AI改善提案の生成に失敗しました。APIキーや通信環境を確認してください。")
             st.exception(e)
-
-    # =========================
-    # 日付ごとの総学習時間グラフ
-    # =========================
-    st.subheader("総学習時間の推移")
-
-    total_study_time = df.groupby('date')['study_time'].sum().reset_index()
-
-    fig, ax = plt.subplots()
-    ax.plot(total_study_time["date"], total_study_time["study_time"], marker = 'o')
-    ax.set_xlabel("日付")
-    ax.set_ylabel("総学習時間")
-    fig.autofmt_xdate()
-    st.pyplot(fig)
-
-    # =========================
-    # 科目別の総学習時間グラフ
-    # =========================
-
-    st.subheader('科目別総学習時間の推移')
-    fig, ax = plt.subplots()
-
-    for subject , group in df.groupby('subject'):
-        total_study_time = group.groupby('date')['study_time'].sum().reset_index() 
-        ax.plot(total_study_time["date"], total_study_time["study_time"], marker = 'o', label=subject)
     
-    
-    ax.set_xlabel("日付")
-    ax.set_ylabel("科目別学習時間")
-    fig.autofmt_xdate()
+    show_total_study_time_chart(df)
+    show_subject_study_time_chart(df)
 
-    ax.legend()
-    st.pyplot(fig)
+
 
     

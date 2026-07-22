@@ -98,8 +98,8 @@ cd study-analystics-ai-app
 pip install -r requirements.txt  
 ```
 ### 3. APIキーを設定
-```bash
 ".streamlit/secrets.toml"を作成し、以下のようにOpenAPIキーを設定します。  
+```bash
 OPENAI_API_KEY = "your_openai_api_key_here"  
 ```
 ### 4. アプリを起動  
